@@ -276,44 +276,155 @@
       <section class="admin-card" v-if="activeSection === 'createArticle'">
         <div class="card-head">
           <div>
-            <p class="eyebrow">新建文章</p>
+            <p class="eyebrow">内容编辑</p>
             <h3>{{ articleForm.id ? '编辑文章' : '新建文章' }}</h3>
           </div>
-          <span class="pill">{{ articleForm.status === 'published' ? '已发布' : '草稿' }}</span>
+          <span class="pill" :class="articleForm.status === 'published' ? 'published' : 'draft'">
+            <component :is="articleForm.status === 'published' ? CircleCheckIcon : FilePenLineIcon" :size="14" />
+            {{ articleForm.status === 'published' ? '已发布' : '草稿' }}
+          </span>
         </div>
 
-        <div class="form-grid">
-          <input v-model="articleForm.coverUrl" placeholder="封面图链接" />
-          <input v-model="articleForm.title" placeholder="标题" />
-          <input v-model="articleForm.summary" placeholder="摘要" />
-          <input v-model="articleForm.tags" placeholder="标签，逗号分隔" />
-          <select v-model.number="articleForm.categoryId">
-            <option :value="0">未分类</option>
-            <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-          </select>
-          <select v-model="articleForm.status">
-            <option value="draft">草稿</option>
-            <option value="published">发布</option>
-          </select>
+        <div class="article-editor-body">
+          <!-- 标题 -->
+          <div class="field-group">
+            <label class="field-label">
+              <Heading2Icon :size="16" />
+              <span>文章标题</span>
+            </label>
+            <input
+              v-model="articleForm.title"
+              type="text"
+              placeholder="输入文章标题…"
+              class="field-input"
+            />
+          </div>
+
+          <!-- 摘要 -->
+          <div class="field-group">
+            <label class="field-label">
+              <AlignLeftIcon :size="16" />
+              <span>文章摘要</span>
+            </label>
+            <div class="field-row">
+              <input
+                v-model="articleForm.summary"
+                type="text"
+                placeholder="简要描述文章内容，留空可从正文自动截取…"
+                class="field-input"
+              />
+              <button
+                type="button"
+                class="field-ai-btn"
+                :disabled="summaryGenerating"
+                title="从正文生成摘要"
+                @click="generateSummaryDraft"
+              >
+                <SparklesIcon :size="15" />
+                <span>{{ summaryGenerating ? '生成中...' : '生成摘要' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 分类 + 标签 -->
+          <div class="field-row-duo">
+            <div class="field-group">
+              <label class="field-label">
+                <FolderOpenIcon :size="16" />
+                <span>文章分类</span>
+              </label>
+              <select v-model.number="articleForm.categoryId" class="field-input">
+                <option :value="0">未分类</option>
+                <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label">
+                <TagsIcon :size="16" />
+                <span>文章标签</span>
+              </label>
+              <input
+                v-model="articleForm.tags"
+                type="text"
+                placeholder="逗号分隔，如 Go, Vue, Docker"
+                class="field-input"
+              />
+            </div>
+          </div>
+
+          <!-- 发布状态 -->
+          <div class="field-group">
+            <label class="field-label">
+              <ToggleLeftIcon :size="16" />
+              <span>发布状态</span>
+            </label>
+            <div class="status-toggle">
+              <button
+                type="button"
+                :class="['status-option', { active: articleForm.status === 'draft' }]"
+                @click="articleForm.status = 'draft'"
+              >
+                <FilePenLineIcon :size="16" />
+                <div>
+                  <strong>草稿</strong>
+                  <small>仅自己可见</small>
+                </div>
+              </button>
+              <button
+                type="button"
+                :class="['status-option', { active: articleForm.status === 'published' }]"
+                @click="articleForm.status = 'published'"
+              >
+                <CircleCheckIcon :size="16" />
+                <div>
+                  <strong>发布</strong>
+                  <small>对所有人可见</small>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <!-- 上传 Markdown -->
+          <div class="field-group">
+            <label class="field-label">
+              <UploadIcon :size="16" />
+              <span>导入 Markdown</span>
+            </label>
+            <div class="upload-block">
+              <div class="upload-block-info">
+                <FileTextIcon :size="18" />
+                <span>支持 .md / .markdown 文件，内容将导入到下方编辑器</span>
+              </div>
+              <label class="upload-block-action">
+                <input type="file" accept=".md,.markdown,text/markdown" @change="uploadMarkdownFile" />
+                <UploadIcon :size="15" />
+                <span>选择文件</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 编辑器 -->
+          <div class="field-group editor-group">
+            <label class="field-label">
+              <PenLineIcon :size="16" />
+              <span>正文编辑</span>
+            </label>
+            <ArticleTiptapEditor ref="articleEditorRef" :markdown="articleForm.content" />
+          </div>
+
+          <!-- 操作按钮 -->
+          <div class="article-editor-actions">
+            <button class="btn-save" type="button" @click="saveArticle">
+              <SaveIcon :size="16" />
+              <span>{{ articleForm.id ? '更新文章' : '保存文章' }}</span>
+            </button>
+            <button class="ghost btn-reset" type="button" @click="resetArticleForm">
+              <RotateCcwIcon :size="16" />
+              <span>清空重填</span>
+            </button>
+          </div>
         </div>
 
-        <div class="upload-grid">
-          <label class="upload-box">
-            <span>上传封面图</span>
-            <input type="file" accept="image/*" @change="uploadCoverImage" />
-          </label>
-          <label class="upload-box">
-            <span>上传 Markdown</span>
-            <input type="file" accept=".md,.markdown,text/markdown" @change="uploadMarkdownFile" />
-          </label>
-        </div>
-
-        <ArticleTiptapEditor ref="articleEditorRef" :markdown="articleForm.content" />
-
-        <div class="actions-row">
-          <button @click="saveArticle"><SaveIcon :size="15" /> 保存文章</button>
-          <button class="ghost" @click="resetArticleForm"><RotateCcwIcon :size="15" /> 清空</button>
-        </div>
         <p class="feedback error" v-if="error">{{ error }}</p>
         <p class="feedback success" v-if="notice">{{ notice }}</p>
       </section>
@@ -361,6 +472,138 @@
                 <span class="pill muted">{{ user.role }}</span>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="admin-card" v-if="activeSection === 'platforms'">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">平台账号</p>
+            <h3>外部平台管理</h3>
+          </div>
+          <span class="pill muted">{{ externalLinks.length }} 项</span>
+        </div>
+
+        <div class="platform-admin-layout">
+          <div class="platform-admin-form">
+            <div class="field-group">
+              <label class="field-label">
+                <GlobeIcon :size="16" />
+                <span>平台名称</span>
+              </label>
+              <input v-model="externalLinkForm.platform" class="field-input" placeholder="例如：微信、B站、GitHub" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">
+                <UserRoundIcon :size="16" />
+                <span>账号名称</span>
+              </label>
+              <input v-model="externalLinkForm.name" class="field-input" placeholder="例如：xiaoli" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">
+                <Link2Icon :size="16" />
+                <span>跳转链接</span>
+              </label>
+              <input v-model="externalLinkForm.linkUrl" class="field-input" placeholder="可选，外部链接地址" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">
+                <QrCodeIcon :size="16" />
+                <span>二维码图片</span>
+              </label>
+              <div class="upload-block">
+                <div class="upload-block-info">
+                  <UploadIcon :size="15" />
+                  <span>{{ externalLinkForm.qrCodeUrl ? '已选择二维码图片' : '上传二维码图片，首页将展示预览' }}</span>
+                </div>
+                <label class="upload-block-action">
+                  <input type="file" accept="image/*" @change="uploadExternalLinkQrCode" />
+                  <span>上传图片</span>
+                </label>
+              </div>
+              <div v-if="externalLinkForm.qrCodeUrl" class="platform-qr-preview">
+                <img :src="externalLinkForm.qrCodeUrl" alt="二维码预览" />
+                <button class="ghost danger" type="button" @click="externalLinkForm.qrCodeUrl = ''">移除</button>
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">
+                <FileTextIcon :size="16" />
+                <span>描述</span>
+              </label>
+              <textarea v-model="externalLinkForm.description" class="field-input" rows="4" placeholder="展示说明，可留空" />
+            </div>
+            <div class="field-row-duo">
+              <div class="field-group">
+                <label class="field-label">
+                  <ToggleLeftIcon :size="16" />
+                  <span>排序</span>
+                </label>
+                <input v-model.number="externalLinkForm.sortOrder" type="number" class="field-input" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">
+                  <CircleCheckIcon :size="16" />
+                  <span>显示状态</span>
+                </label>
+                <button
+                  type="button"
+                  class="status-option"
+                  :class="{ active: externalLinkForm.isActive }"
+                  @click="externalLinkForm.isActive = !externalLinkForm.isActive"
+                >
+                  <component :is="externalLinkForm.isActive ? CircleCheckIcon : FilePenLineIcon" :size="16" />
+                  <div>
+                    <strong>{{ externalLinkForm.isActive ? '显示中' : '已隐藏' }}</strong>
+                    <small>控制首页是否展示</small>
+                  </div>
+                </button>
+              </div>
+            </div>
+            <div class="article-editor-actions">
+              <button class="btn-save" type="button" @click="saveExternalLink">
+                <SaveIcon :size="15" />
+                <span>{{ externalLinkForm.id ? '保存修改' : '新增平台' }}</span>
+              </button>
+              <button class="ghost btn-reset" type="button" @click="resetExternalLink">
+                <RotateCcwIcon :size="16" />
+                <span>清空表单</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="platform-admin-list">
+            <article v-for="item in externalLinks" :key="item.id" class="platform-admin-card">
+              <div class="platform-admin-card-head">
+                <div>
+                  <p class="platform-admin-platform">{{ item.platform }}</p>
+                  <h4>{{ item.name }}</h4>
+                </div>
+                <span class="pill" :class="item.isActive ? 'published' : 'draft'">
+                  {{ item.isActive ? '显示' : '隐藏' }}
+                </span>
+              </div>
+              <p class="platform-admin-desc">{{ item.description || '暂无描述' }}</p>
+              <div class="platform-admin-preview" v-if="item.qrCodeUrl">
+                <img :src="item.qrCodeUrl" :alt="item.platform" />
+              </div>
+              <div class="platform-admin-meta">
+                <span>排序 {{ item.sortOrder }}</span>
+                <a v-if="item.linkUrl" :href="item.linkUrl" target="_blank" rel="noreferrer">打开链接</a>
+              </div>
+              <div class="actions-row small">
+                <button class="ghost" type="button" @click="editExternalLink(item)">
+                  <PencilIcon :size="13" />
+                  编辑
+                </button>
+                <button class="ghost danger" type="button" @click="removeExternalLink(item.id)">
+                  <Trash2Icon :size="13" />
+                  删除
+                </button>
+              </div>
+            </article>
           </div>
         </div>
       </section>
@@ -427,15 +670,16 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  BoldIcon, ChevronDownIcon, Code2Icon, CircleCheckIcon, EyeIcon, EyeOffIcon, FilePenLineIcon, FileTextIcon, FolderOpenIcon,
-  Heading2Icon, LayoutDashboardIcon, LinkIcon, ListIcon,
-  MessageSquareIcon, PencilIcon, PlusCircleIcon, QuoteIcon,
+  AlignLeftIcon, BoldIcon, ChevronDownIcon, Code2Icon, CircleCheckIcon, EyeIcon, EyeOffIcon,
+  FilePenLineIcon, FileTextIcon, FolderOpenIcon,
+  GlobeIcon, Heading2Icon, LayoutDashboardIcon, Link2Icon, ListIcon, QrCodeIcon, SparklesIcon,
+  MessageSquareIcon, PenLineIcon, PencilIcon, PlusCircleIcon, QuoteIcon,
   RefreshCwIcon, RotateCcwIcon, SaveIcon, SearchIcon,
-  Trash2Icon, UsersIcon,
+  TagsIcon, ToggleLeftIcon, Trash2Icon, UploadIcon, UserRoundIcon, UsersIcon,
 } from 'lucide-vue-next'
 import { api } from '../api'
 import ArticleTiptapEditor from '../components/ArticleTiptapEditor.vue'
-import type { AdminNotificationResponse, AdminStats, Article, Category, Comment, NotificationCounts, NotificationType, User } from '../types'
+import type { AdminNotificationResponse, AdminStats, Article, Category, Comment, ExternalLink, NotificationCounts, NotificationType, User } from '../types'
 
 const defaultAvatar =
   'data:image/svg+xml;charset=UTF-8,' +
@@ -447,7 +691,7 @@ const defaultAvatar =
     </svg>
   `)
 
-type AdminSection = 'overview' | 'articles' | 'createArticle' | 'categories' | 'comments' | 'users'
+type AdminSection = 'overview' | 'articles' | 'createArticle' | 'categories' | 'platforms' | 'comments' | 'users'
 
 const router = useRouter()
 const ready = ref(false)
@@ -457,8 +701,10 @@ const articles = ref<Article[]>([])
 const categories = ref<Category[]>([])
 const comments = ref<Comment[]>([])
 const users = ref<User[]>([])
+const externalLinks = ref<ExternalLink[]>([])
 const notifications = ref<AdminNotificationResponse | null>(null)
 const categoryName = ref('')
+const platformQrFile = ref<File | null>(null)
 const articleQuery = ref('')
 const articleStatus = ref('')
 const activeSection = ref<AdminSection>('overview')
@@ -467,15 +713,25 @@ const markdownTextarea = ref<HTMLTextAreaElement | null>(null)
 const markdownPreviewRef = ref<HTMLDivElement | null>(null)
 const error = ref('')
 const notice = ref('')
+const summaryGenerating = ref(false)
 const articleForm = reactive({
   id: 0,
-  coverUrl: '',
   title: '',
   summary: '',
   tags: '',
   content: '',
   status: 'draft' as 'draft' | 'published',
   categoryId: 0,
+})
+const externalLinkForm = reactive({
+  id: 0,
+  name: '',
+  platform: '',
+  description: '',
+  linkUrl: '',
+  qrCodeUrl: '',
+  sortOrder: 0,
+  isActive: true,
 })
 
 const notificationBadgeCounts = computed<NotificationCounts>(() => ({
@@ -490,6 +746,7 @@ const notificationBadgeMap = computed<Record<AdminSection, number>>(() => ({
   articles: (notificationBadgeCounts.value.like ?? 0) + (notificationBadgeCounts.value.favorite ?? 0),
   createArticle: 0,
   categories: 0,
+  platforms: 0,
   comments: notificationBadgeCounts.value.comment ?? 0,
   users: notificationBadgeCounts.value.register ?? 0,
 }))
@@ -605,6 +862,7 @@ const menuIcons: Record<AdminSection, any> = {
   articles: FileTextIcon,
   createArticle: PlusCircleIcon,
   categories: FolderOpenIcon,
+  platforms: QrCodeIcon,
   comments: MessageSquareIcon,
   users: UsersIcon,
 }
@@ -614,6 +872,7 @@ const adminMenu: Array<{ key: AdminSection; label: string }> = [
   { key: 'articles', label: '文章' },
   { key: 'createArticle', label: '新建文章' },
   { key: 'categories', label: '分类' },
+  { key: 'platforms', label: '平台账号' },
   { key: 'comments', label: '评论' },
   { key: 'users', label: '用户' },
 ]
@@ -624,6 +883,7 @@ const activeSectionCopy = computed(() => {
     articles: { title: '文章管理' },
     createArticle: { title: articleForm.id ? '编辑文章' : '新建文章' },
     categories: { title: '分类管理' },
+    platforms: { title: '平台账号管理' },
     comments: { title: '评论管理' },
     users: { title: '用户管理' },
   }
@@ -924,25 +1184,6 @@ function articleStatusIcon(status: Article['status']) {
   return status === 'published' ? CircleCheckIcon : FilePenLineIcon
 }
 
-async function uploadCoverImage(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  error.value = ''
-  notice.value = ''
-  try {
-    const res = await api.uploadAdminFile(file, 'image')
-    if (res.url) {
-      articleForm.coverUrl = res.url
-      notice.value = '封面图已上传'
-    }
-  } catch (e) {
-    error.value = (e as Error).message
-  } finally {
-    input.value = ''
-  }
-}
-
 async function uploadMarkdownFile(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -962,6 +1203,29 @@ async function uploadMarkdownFile(event: Event) {
     error.value = (e as Error).message
   } finally {
     input.value = ''
+  }
+}
+
+async function generateSummaryDraft() {
+  const markdown = articleEditorRef.value?.getMarkdown?.() || articleForm.content || ''
+  if (!markdown.trim()) {
+    notice.value = '请先输入正文内容，再生成摘要'
+    return
+  }
+  summaryGenerating.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const res = await api.generateArticleSummary({
+      title: articleForm.title.trim(),
+      content: markdown,
+    })
+    articleForm.summary = res.summary
+    notice.value = '摘要已生成'
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    summaryGenerating.value = false
   }
 }
 
@@ -990,16 +1254,18 @@ async function syncMe() {
 }
 
 async function refreshAll() {
-  const [statsRes, categoriesRes, commentsRes, usersRes] = await Promise.all([
+  const [statsRes, categoriesRes, commentsRes, usersRes, externalLinksRes] = await Promise.all([
     api.adminStats(),
     api.adminCategories(),
     api.adminComments(),
     api.adminUsers(),
+    api.adminExternalLinks(),
   ])
   stats.value = statsRes
   categories.value = categoriesRes.items
   comments.value = commentsRes.items
   users.value = usersRes.items
+  externalLinks.value = externalLinksRes.items
   await loadArticles()
   await loadNotifications()
 }
@@ -1016,6 +1282,10 @@ async function syncNotifications() {
 
 async function loadArticles() {
   articles.value = (await api.adminArticles({ q: articleQuery.value || undefined, status: articleStatus.value || undefined })).items
+}
+
+async function loadExternalLinks() {
+  externalLinks.value = (await api.adminExternalLinks()).items
 }
 
 async function loadNotifications() {
@@ -1068,7 +1338,6 @@ function editArticle(item: Article) {
   activeSection.value = 'createArticle'
   Object.assign(articleForm, {
     id: item.id,
-    coverUrl: item.coverUrl || '',
     title: item.title,
     summary: item.summary || '',
     tags: Array.isArray(item.tags) ? item.tags.join(', ') : '',
@@ -1082,7 +1351,6 @@ function editArticle(item: Article) {
 function resetArticleForm() {
   Object.assign(articleForm, {
     id: 0,
-    coverUrl: '',
     title: '',
     summary: '',
     tags: '',
@@ -1090,12 +1358,92 @@ function resetArticleForm() {
     status: 'draft',
     categoryId: 0,
   })
+  articleEditorRef.value?.setMarkdown?.('')
 }
 
 async function saveCategory() {
   if (!categoryName.value.trim()) return
   await api.saveCategory({ name: categoryName.value })
   categoryName.value = ''
+  await refreshAll()
+}
+
+function resetExternalLink() {
+  platformQrFile.value = null
+  Object.assign(externalLinkForm, {
+    id: 0,
+    name: '',
+    platform: '',
+    description: '',
+    linkUrl: '',
+    qrCodeUrl: '',
+    sortOrder: 0,
+    isActive: true,
+  })
+}
+
+function editExternalLink(item: ExternalLink) {
+  platformQrFile.value = null
+  Object.assign(externalLinkForm, {
+    id: item.id,
+    name: item.name,
+    platform: item.platform,
+    description: item.description || '',
+    linkUrl: item.linkUrl || '',
+    qrCodeUrl: item.qrCodeUrl || '',
+    sortOrder: item.sortOrder ?? 0,
+    isActive: item.isActive,
+  })
+  activeSection.value = 'platforms'
+}
+
+async function uploadExternalLinkQrCode(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const res = await api.uploadAdminFile(file, 'image')
+    if (res.url) {
+      externalLinkForm.qrCodeUrl = res.url
+    }
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    input.value = ''
+  }
+}
+
+async function saveExternalLink() {
+  error.value = ''
+  notice.value = ''
+  try {
+    if (!externalLinkForm.platform.trim() || !externalLinkForm.name.trim()) {
+      error.value = '平台名称和账号名称不能为空'
+      return
+    }
+    await api.saveExternalLink({
+      id: externalLinkForm.id || undefined,
+      name: externalLinkForm.name.trim(),
+      platform: externalLinkForm.platform.trim(),
+      description: externalLinkForm.description.trim(),
+      linkUrl: externalLinkForm.linkUrl.trim(),
+      qrCodeUrl: externalLinkForm.qrCodeUrl.trim(),
+      sortOrder: Number.isFinite(Number(externalLinkForm.sortOrder)) ? Number(externalLinkForm.sortOrder) : 0,
+      isActive: externalLinkForm.isActive,
+    })
+    notice.value = externalLinkForm.id ? '平台账号已更新' : '平台账号已新增'
+    resetExternalLink()
+    await refreshAll()
+  } catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
+async function removeExternalLink(id: number) {
+  await api.deleteExternalLink(id)
+  if (externalLinkForm.id === id) {
+    resetExternalLink()
+  }
   await refreshAll()
 }
 
@@ -1124,3 +1472,4 @@ onBeforeUnmount(() => {
   window.removeEventListener('blog-notifications-changed', syncNotifications)
 })
 </script>
+

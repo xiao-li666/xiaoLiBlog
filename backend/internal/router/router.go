@@ -25,6 +25,7 @@ func New(cfg config.Config, h *handler.Handler) *gin.Engine {
 	api := router.Group("/api")
 	{
 		api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+		api.POST("/auth/verification-code", h.SendVerificationCode)
 		api.POST("/auth/register", h.Register)
 		api.POST("/auth/login", h.Login)
 		api.GET("/articles", h.ListArticles)
@@ -32,6 +33,8 @@ func New(cfg config.Config, h *handler.Handler) *gin.Engine {
 		api.GET("/articles/:slug", h.GetArticleBySlug)
 		api.GET("/articles/id/:id/comments", h.ListComments)
 		api.GET("/categories", h.ListCategories)
+		api.GET("/tags", h.ListTags)
+		api.GET("/external-links", h.ListExternalLinks)
 
 		auth := api.Group("")
 		auth.Use(h.AuthRequired())
@@ -49,6 +52,7 @@ func New(cfg config.Config, h *handler.Handler) *gin.Engine {
 		{
 			admin.GET("/stats", h.AdminStats)
 			admin.POST("/uploads", h.UploadFile)
+			admin.POST("/articles/summary", h.GenerateArticleSummary)
 			admin.GET("/notifications/stream", h.AdminNotificationStream)
 			admin.GET("/articles", h.AdminListArticles)
 			admin.POST("/articles", h.UpsertArticle)
@@ -66,6 +70,10 @@ func New(cfg config.Config, h *handler.Handler) *gin.Engine {
 			admin.POST("/categories", h.CreateCategory)
 			admin.PUT("/categories/:id", h.UpdateCategory)
 			admin.DELETE("/categories/:id", h.DeleteCategory)
+			admin.GET("/external-links", h.AdminListExternalLinks)
+			admin.POST("/external-links", h.UpsertExternalLink)
+			admin.PUT("/external-links/:id", h.UpsertExternalLink)
+			admin.DELETE("/external-links/:id", h.DeleteExternalLink)
 		}
 	}
 

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,7 +34,10 @@ type Handler struct {
 	RDB           *redis.Client
 	JWTKey        []byte
 	UploadDir     string
+	summaryAI     *summaryGenerator
 	notifications *notificationHub
+	verification  *verificationCodeStore
+	mailer        *verificationMailer
 }
 
 type notificationHub struct {
@@ -40,6 +47,51 @@ type notificationHub struct {
 
 func newNotificationHub() *notificationHub {
 	return &notificationHub{subs: make(map[chan []byte]struct{})}
+}
+
+type verificationCodeEntry struct {
+	Code      string
+	ExpiresAt time.Time
+}
+
+type verificationCodeStore struct {
+	mu      sync.Mutex
+	entries map[string]verificationCodeEntry
+}
+
+func newVerificationCodeStore() *verificationCodeStore {
+	return &verificationCodeStore{entries: make(map[string]verificationCodeEntry)}
+}
+
+func (s *verificationCodeStore) issue(email, purpose, code string, ttl time.Duration) {
+	key := verificationCodeKey(email, purpose)
+	s.mu.Lock()
+	s.entries[key] = verificationCodeEntry{Code: code, ExpiresAt: time.Now().Add(ttl)}
+	s.mu.Unlock()
+}
+
+func (s *verificationCodeStore) verify(email, purpose, code string) bool {
+	key := verificationCodeKey(email, purpose)
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.entries[key]
+	if !ok {
+		return false
+	}
+	if now.After(entry.ExpiresAt) {
+		delete(s.entries, key)
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(entry.Code), strings.TrimSpace(code)) {
+		return false
+	}
+	delete(s.entries, key)
+	return true
+}
+
+func verificationCodeKey(email, purpose string) string {
+	return strings.ToLower(strings.TrimSpace(email)) + "|" + strings.ToLower(strings.TrimSpace(purpose))
 }
 
 func (h *notificationHub) subscribe() chan []byte {
@@ -92,14 +144,22 @@ type ArticleInput struct {
 }
 
 type LoginInput struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	VerificationCode string `json:"verificationCode"`
 }
 
 type RegisterInput struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Name             string `json:"name"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	ConfirmPassword  string `json:"confirmPassword"`
+	VerificationCode string `json:"verificationCode"`
+}
+
+type VerificationCodeInput struct {
+	Email   string `json:"email"`
+	Purpose string `json:"purpose"`
 }
 
 type UpdateMeInput struct {
@@ -115,14 +175,165 @@ type CategoryInput struct {
 	Name string `json:"name"`
 }
 
-func New(db *gorm.DB, rdb *redis.Client, jwtKey []byte, uploadDir string) *Handler {
+type ExternalLinkInput struct {
+	Name        string `json:"name"`
+	Platform    string `json:"platform"`
+	Description string `json:"description"`
+	LinkURL     string `json:"linkUrl"`
+	QRCodeURL   string `json:"qrCodeUrl"`
+	SortOrder   int    `json:"sortOrder"`
+	IsActive    *bool  `json:"isActive"`
+}
+
+type ArticleSummaryInput struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+type SummaryAIConfig struct {
+	APIKey  string
+	BaseURL string
+	Model   string
+	Timeout time.Duration
+}
+
+type summaryGenerator struct {
+	apiKey  string
+	baseURL string
+	model   string
+	client  *http.Client
+}
+
+func NewSummaryGenerator(cfg SummaryAIConfig) *summaryGenerator {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil
+	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://api.deepseek.com"
+	}
+	modelName := strings.TrimSpace(cfg.Model)
+	if modelName == "" {
+		modelName = "deepseek-v4-flash"
+	}
+	return &summaryGenerator{
+		apiKey:  strings.TrimSpace(cfg.APIKey),
+		baseURL: baseURL,
+		model:   modelName,
+		client:  &http.Client{Timeout: timeout},
+	}
+}
+
+func New(db *gorm.DB, rdb *redis.Client, jwtKey []byte, uploadDir string, mailer *verificationMailer, summaryAI *summaryGenerator) *Handler {
 	return &Handler{
 		DB:            db,
 		RDB:           rdb,
 		JWTKey:        jwtKey,
 		UploadDir:     uploadDir,
+		summaryAI:     summaryAI,
 		notifications: newNotificationHub(),
+		verification:  newVerificationCodeStore(),
+		mailer:        mailer,
 	}
+}
+
+func (g *summaryGenerator) Generate(ctx context.Context, title, content string) (string, error) {
+	if g == nil {
+		return "", errors.New("summary generator is not configured")
+	}
+	payload := map[string]any{
+		"model": g.model,
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "你是个人博客的摘要生成器。请根据文章标题和正文生成一段适合列表展示的中文摘要。要求：只输出摘要正文，不要编号、引号、前后说明；长度控制在60到120个中文字符之间；保留专业术语；不要提到“本文”“文章”“摘要”等字样。",
+			},
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("标题：%s\n正文：\n%s", strings.TrimSpace(title), strings.TrimSpace(content)),
+			},
+		},
+		"temperature": 0.2,
+		"max_tokens":  180,
+		"stream":      false,
+		"thinking": map[string]any{
+			"type": "disabled",
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+g.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("deepseek api error: %s", strings.TrimSpace(string(raw)))
+	}
+
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", err
+	}
+	if len(decoded.Choices) == 0 {
+		return "", errors.New("deepseek returned no summary")
+	}
+	summary := normalizeSummary(decoded.Choices[0].Message.Content)
+	if summary == "" {
+		return "", errors.New("deepseek returned empty summary")
+	}
+	return truncateRunes(summary, 140), nil
+}
+
+func normalizeSummary(text string) string {
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	text = strings.TrimSpace(text)
+	for strings.Contains(text, "  ") {
+		text = strings.ReplaceAll(text, "  ", " ")
+	}
+	text = strings.Trim(text, `"'“”‘’`)
+	return text
+}
+
+func truncateRunes(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit <= 1 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func (h *Handler) AdminStats(c *gin.Context) {
@@ -264,14 +475,66 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 	})
 }
 
+func (h *Handler) SendVerificationCode(c *gin.Context) {
+	var input VerificationCodeInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		badRequest(c, err)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	purpose := strings.ToLower(strings.TrimSpace(input.Purpose))
+	if email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
+		return
+	}
+	if purpose != "login" && purpose != "register" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "purpose must be login or register"})
+		return
+	}
+	code := randomVerificationCode()
+	if h.mailer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "smtp is not configured"})
+		return
+	}
+	if err := h.mailer.SendVerificationCode(email, purpose, code); err != nil {
+		internalError(c, err)
+		return
+	}
+	if h.verification != nil {
+		h.verification.issue(email, purpose, code, 5*time.Minute)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":        true,
+		"expiresIn": 300,
+	})
+}
+
 func (h *Handler) Register(c *gin.Context) {
 	var input RegisterInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		badRequest(c, err)
 		return
 	}
-	if len(input.Password) < 6 || input.Email == "" || input.Name == "" {
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	if input.Name == "" || email == "" || strings.TrimSpace(input.Password) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name, email and password are required"})
+		return
+	}
+	if input.Password != input.ConfirmPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "passwords do not match"})
+		return
+	}
+	if len(input.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 6 characters"})
+		return
+	}
+	var existingCount int64
+	if err := h.DB.Model(&model.User{}).Where("email = ?", email).Count(&existingCount).Error; err == nil && existingCount > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email already registered"})
+		return
+	}
+	if h.verification == nil || !h.verification.verify(email, "register", input.VerificationCode) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "verification code is invalid or expired"})
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
@@ -287,7 +550,7 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 	user := model.User{
 		Name:         input.Name,
-		Email:        strings.ToLower(strings.TrimSpace(input.Email)),
+		Email:        email,
 		PasswordHash: string(hash),
 		Role:         role,
 	}
@@ -310,13 +573,22 @@ func (h *Handler) Login(c *gin.Context) {
 		badRequest(c, err)
 		return
 	}
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	if email == "" || strings.TrimSpace(input.Password) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email, password and verification code are required"})
+		return
+	}
 	var user model.User
-	if err := h.DB.Where("email = ?", strings.ToLower(strings.TrimSpace(input.Email))).First(&user).Error; err != nil {
+	if err := h.DB.Where("email = ?", email).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)) != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		return
+	}
+	if h.verification == nil || !h.verification.verify(email, "login", input.VerificationCode) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "verification code is invalid or expired"})
 		return
 	}
 	token, err := h.issueToken(user)
@@ -468,8 +740,94 @@ func (h *Handler) ListComments(c *gin.Context) {
 }
 
 func (h *Handler) ListCategories(c *gin.Context) {
-	var rows []model.Category
-	if err := h.DB.Order("name asc").Find(&rows).Error; err != nil {
+	type categoryItem struct {
+		ID           uint   `json:"id"`
+		Name         string `json:"name"`
+		Slug         string `json:"slug"`
+		ArticleCount int64  `json:"articleCount" gorm:"column:article_count"`
+	}
+
+	var items []categoryItem
+	if err := h.DB.Model(&model.Category{}).
+		Select("categories.id, categories.name, categories.slug, COUNT(articles.id) AS article_count").
+		Joins("LEFT JOIN articles ON articles.category_id = categories.id AND articles.status = ?", "published").
+		Group("categories.id, categories.name, categories.slug").
+		Order("categories.name asc").
+		Scan(&items).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *Handler) ListTags(c *gin.Context) {
+	type tagRow struct {
+		Tags string
+	}
+	var rows []tagRow
+	if err := h.DB.Model(&model.Article{}).
+		Select("tags").
+		Where("status = ? AND tags <> ''", "published").
+		Scan(&rows).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+
+	counts := make(map[string]int64)
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		seen := make(map[string]struct{})
+		for _, tag := range splitTags(row.Tags) {
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			counts[tag]++
+		}
+	}
+
+	for name, count := range counts {
+		items = append(items, gin.H{"name": name, "articleCount": count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		left := items[i]["articleCount"].(int64)
+		right := items[j]["articleCount"].(int64)
+		if left != right {
+			return left > right
+		}
+		return items[i]["name"].(string) < items[j]["name"].(string)
+	})
+
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *Handler) GenerateArticleSummary(c *gin.Context) {
+	var input ArticleSummaryInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		badRequest(c, err)
+		return
+	}
+	title := strings.TrimSpace(input.Title)
+	content := strings.TrimSpace(input.Content)
+	if content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content is required"})
+		return
+	}
+	if h.summaryAI == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "deepseek summary generator is not configured"})
+		return
+	}
+	summary, err := h.summaryAI.Generate(c.Request.Context(), title, content)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"summary": summary})
+}
+
+func (h *Handler) ListExternalLinks(c *gin.Context) {
+	var rows []model.ExternalLink
+	if err := h.DB.Where("is_active = ?", true).Order("sort_order asc, id desc").Find(&rows).Error; err != nil {
 		internalError(c, err)
 		return
 	}
@@ -891,6 +1249,86 @@ func (h *Handler) DeleteCategory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+func (h *Handler) AdminListExternalLinks(c *gin.Context) {
+	var rows []model.ExternalLink
+	if err := h.DB.Order("sort_order asc, id desc").Find(&rows).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": rows})
+}
+
+func (h *Handler) UpsertExternalLink(c *gin.Context) {
+	var input ExternalLinkInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		badRequest(c, err)
+		return
+	}
+	name := strings.TrimSpace(input.Name)
+	platform := strings.TrimSpace(input.Platform)
+	if name == "" || platform == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "platform and name are required"})
+		return
+	}
+	active := true
+	if input.IsActive != nil {
+		active = *input.IsActive
+	}
+
+	id := parseUint(c.Param("id"))
+	data := map[string]any{
+		"name":        name,
+		"platform":    platform,
+		"description": strings.TrimSpace(input.Description),
+		"link_url":    strings.TrimSpace(input.LinkURL),
+		"qr_code_url": strings.TrimSpace(input.QRCodeURL),
+		"sort_order":  input.SortOrder,
+		"is_active":   active,
+	}
+	if c.Param("id") == "" {
+		item := model.ExternalLink{
+			Name:        name,
+			Platform:    platform,
+			Description: strings.TrimSpace(input.Description),
+			LinkURL:     strings.TrimSpace(input.LinkURL),
+			QRCodeURL:   strings.TrimSpace(input.QRCodeURL),
+			SortOrder:   input.SortOrder,
+			IsActive:    active,
+		}
+		if err := h.DB.Create(&item).Error; err != nil {
+			internalError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"item": item})
+		return
+	}
+
+	res := h.DB.Model(&model.ExternalLink{}).Where("id = ?", id).Updates(data)
+	if res.Error != nil {
+		internalError(c, res.Error)
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "external link not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) DeleteExternalLink(c *gin.Context) {
+	id := parseUint(c.Param("id"))
+	res := h.DB.Delete(&model.ExternalLink{}, id)
+	if res.Error != nil {
+		internalError(c, res.Error)
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "external link not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func (h *Handler) AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
@@ -1074,6 +1512,14 @@ func randomSlug() string {
 	_, _ = rand.Read(b[:])
 	sum := sha256.Sum256(b[:])
 	return hex.EncodeToString(sum[:8])
+}
+
+func randomVerificationCode() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "000000"
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 func currentUser(c *gin.Context) model.User {

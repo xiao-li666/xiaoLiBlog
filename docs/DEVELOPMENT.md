@@ -20,8 +20,15 @@
 - `MYSQL_DSN`
 - `REDIS_ADDR`
 - `JWT_SECRET`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
 - `FRONTEND_ORIGIN`
 - `PORT`
+
+验证码邮件建议使用管理员邮箱的 SMTP 发出，`SMTP_USERNAME` 和 `SMTP_FROM` 通常都填你的 QQ 邮箱地址，`SMTP_PASSWORD` 填授权码，不要填 QQ 登录密码。
 
 ### 2.3 启动依赖服务
 
@@ -131,4 +138,3 @@ docker compose up -d
 4. 站长权限生效。
 5. 搜索、评论、点赞、收藏都已验证。
 6. 首页和详情页在桌面与移动端都正常。
-

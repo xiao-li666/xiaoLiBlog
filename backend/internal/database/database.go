@@ -23,6 +23,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.Comment{},
 		&model.Reaction{},
 		&model.Notification{},
+		&model.ExternalLink{},
 	)
 }
 

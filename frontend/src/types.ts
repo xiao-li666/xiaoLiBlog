@@ -11,6 +11,25 @@ export type Category = {
   id: number
   name: string
   slug: string
+  articleCount?: number
+}
+
+export type TagStat = {
+  name: string
+  articleCount: number
+}
+
+export type ExternalLink = {
+  id: number
+  name: string
+  platform: string
+  description?: string
+  linkUrl?: string
+  qrCodeUrl?: string
+  sortOrder: number
+  isActive: boolean
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type Article = {

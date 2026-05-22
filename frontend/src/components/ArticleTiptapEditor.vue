@@ -117,6 +117,23 @@
       <button
         type="button"
         class="tiptap-tool"
+        :class="{ uploading: imageUploading }"
+        title="上传并插入图片"
+        :disabled="imageUploading"
+        @mousedown.prevent="openImagePicker"
+      >
+        <ImageIcon :size="15" />
+      </button>
+      <input
+        ref="imageInputRef"
+        class="tiptap-file-input"
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        @change="handleImageUpload"
+      />
+      <button
+        type="button"
+        class="tiptap-tool"
         title="分割线"
         @mousedown.prevent="editor.chain().focus().setHorizontalRule().run()"
       >
@@ -153,7 +170,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
-import { TextSelection } from '@tiptap/pm/state'
+import { Extension, mergeAttributes, Node } from '@tiptap/core'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -162,9 +181,11 @@ import { marked } from 'marked'
 import TurndownService from 'turndown'
 import {
   BoldIcon, Code2Icon, CodeIcon, Heading1Icon, Heading2Icon, ItalicIcon,
-  LinkIcon, ListIcon, ListOrderedIcon, MinusIcon, QuoteIcon, Redo2Icon,
+  ImageIcon, LinkIcon, ListIcon, ListOrderedIcon, MinusIcon, QuoteIcon, Redo2Icon,
   StrikethroughIcon, Undo2Icon,
 } from 'lucide-vue-next'
+import { api } from '../api'
+import { highlightCodeTokens, normalizeCodeLanguage } from '../utils/codeHighlight'
 
 const props = defineProps<{
   markdown: string
@@ -172,18 +193,85 @@ const props = defineProps<{
 
 const codeLanguages = [
   { label: 'cpp', value: 'cpp' },
+  { label: 'c', value: 'c' },
   { label: 'go', value: 'go' },
   { label: 'js', value: 'js' },
   { label: 'ts', value: 'ts' },
   { label: 'vue', value: 'vue' },
   { label: 'python', value: 'python' },
+  { label: 'java', value: 'java' },
+  { label: 'rust', value: 'rust' },
   { label: 'bash', value: 'bash' },
   { label: 'sql', value: 'sql' },
   { label: 'json', value: 'json' },
+  { label: 'yaml', value: 'yaml' },
+  { label: 'html', value: 'markup' },
+  { label: 'css', value: 'css' },
 ]
 
 const codeLanguage = ref('cpp')
 const editorTick = ref(0)
+const imageInputRef = ref<HTMLInputElement | null>(null)
+const imageUploading = ref(false)
+
+const ImageNode = Node.create({
+  name: 'image',
+  group: 'block',
+  atom: true,
+  draggable: true,
+
+  addAttributes() {
+    return {
+      src: {
+        default: null,
+      },
+      alt: {
+        default: null,
+      },
+      title: {
+        default: null,
+      },
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'img[src]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['img', mergeAttributes(HTMLAttributes)]
+  },
+})
+
+const SyntaxHighlightExtension = Extension.create({
+  name: 'syntaxHighlight',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('syntaxHighlight'),
+        props: {
+          decorations(state) {
+            const decorations: Decoration[] = []
+            state.doc.descendants((node, pos) => {
+              if (node.type.name !== 'codeBlock') return
+              const language = normalizeCodeLanguage(String(node.attrs.language || ''))
+              const text = node.textContent || ''
+              const tokens = highlightCodeTokens(text, language)
+              for (const token of tokens) {
+                decorations.push(
+                  Decoration.inline(pos + 1 + token.start, pos + 1 + token.end, {
+                    class: token.className,
+                  }),
+                )
+              }
+            })
+            return DecorationSet.create(state.doc, decorations)
+          },
+        },
+      }),
+    ]
+  },
+})
 
 const turndown = new TurndownService({
   bulletListMarker: '-',
@@ -236,6 +324,8 @@ const editor = useEditor({
     Placeholder.configure({
       placeholder: '在这里直接写文章，Markdown 快捷语法会自动转换为排版效果',
     }),
+    ImageNode,
+    SyntaxHighlightExtension,
     Typography,
   ],
   editorProps: {
@@ -319,6 +409,41 @@ function setLink() {
     .extendMarkRange('link')
     .setLink({ href: normalizeUrl(url.trim()) })
     .run()
+}
+
+function openImagePicker() {
+  if (imageUploading.value) return
+  imageInputRef.value?.click()
+}
+
+async function handleImageUpload(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !editor.value) return
+
+  imageUploading.value = true
+  try {
+    const res = await api.uploadAdminFile(file, 'image')
+    if (!res.url) throw new Error('图片上传失败')
+    editor.value
+      .chain()
+      .focus()
+      .insertContent({
+        type: 'image',
+        attrs: {
+          src: res.url,
+          alt: file.name,
+          title: file.name,
+        },
+      })
+      .run()
+    editorTick.value += 1
+  } catch (error) {
+    window.alert((error as Error).message || '图片上传失败')
+  } finally {
+    imageUploading.value = false
+  }
 }
 
 function normalizeUrl(url: string) {

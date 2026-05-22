@@ -1,5 +1,5 @@
 <template>
-  <div class="shell">
+  <div class="shell" :class="{ 'home-shell': isHomePage }">
     <header class="topbar">
       <RouterLink class="brand" to="/">
         <SiteLogo />

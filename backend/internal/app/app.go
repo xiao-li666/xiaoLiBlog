@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"os"
+	"time"
 
 	"blogapp/backend/internal/config"
 	"blogapp/backend/internal/database"
@@ -37,7 +38,13 @@ func Run() {
 		rdb = redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	}
 
-	h := handler.New(db, rdb, []byte(cfg.JWTSecret), cfg.UploadDir)
+	summaryAI := handler.NewSummaryGenerator(handler.SummaryAIConfig{
+		APIKey:  cfg.DeepSeekAPIKey,
+		BaseURL: cfg.DeepSeekBaseURL,
+		Model:   cfg.DeepSeekModel,
+		Timeout: time.Duration(cfg.DeepSeekTimeout) * time.Second,
+	})
+	h := handler.New(db, rdb, []byte(cfg.JWTSecret), cfg.UploadDir, handler.NewVerificationMailer(cfg), summaryAI)
 	engine := router.New(cfg, h)
 
 	log.Printf("backend listening on :%s", cfg.Port)

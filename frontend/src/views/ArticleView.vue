@@ -44,8 +44,12 @@
       <section class="sidebar-card">
         <div class="sidebar-title">互动</div>
         <div class="article-actions">
-          <button @click="react('like')"><ThumbsUpIcon :size="16" /> 点赞 {{ article.likesCount }}</button>
-          <button class="ghost" @click="react('favorite')"><BookmarkIcon :size="16" /> 收藏 {{ article.favoritesCount }}</button>
+          <button :class="['reaction-button', { animating: reactionPulse.like }]" @click="react('like')">
+            <ThumbsUpIcon :size="16" /> 点赞 {{ article.likesCount }}
+          </button>
+          <button :class="['reaction-button ghost', 'favorite', { animating: reactionPulse.favorite }]" @click="react('favorite')">
+            <BookmarkIcon :size="16" /> 收藏 {{ article.favoritesCount }}
+          </button>
         </div>
       </section>
 
@@ -58,7 +62,6 @@
         <div class="actions-row">
           <button @click="sendComment"><SendIcon :size="14" /> 发表评论</button>
         </div>
-        <p class="feedback success" v-if="notice">{{ notice }}</p>
 
         <div class="comment-list">
           <div class="comment-card" v-for="item in comments" :key="item.id">
@@ -86,12 +89,13 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Marked, type Token, type Tokens } from 'marked'
 import { BookmarkIcon, LinkIcon, MessageSquareIcon, SendIcon, ThumbsUpIcon } from 'lucide-vue-next'
 import { api } from '../api'
 import type { Article, Comment } from '../types'
+import { highlightCodeToHtml, normalizeCodeLanguage } from '../utils/codeHighlight'
 
 const defaultAvatar =
   'data:image/svg+xml;charset=UTF-8,' +
@@ -133,12 +137,12 @@ const markdown = new Marked({
       return `<h${token.depth} id="${escapeAttr(id)}" class="markdown-heading">${escapeHtml(text)}</h${token.depth}>`
     },
     code(token: Tokens.Code) {
-      const language = normalizeLanguage(token.lang || '')
+      const language = normalizeCodeLanguage(token.lang || '')
       const label = language || 'text'
       return [
         '<figure class="code-block">',
         `<figcaption><span>${escapeHtml(label)}</span></figcaption>`,
-        `<pre><code class="language-${escapeAttr(language || 'text')}">${highlightCode(token.text, language)}</code></pre>`,
+        `<pre><code class="language-${escapeAttr(language || 'text')}">${highlightCodeToHtml(token.text, language)}</code></pre>`,
         '</figure>',
       ].join('')
     },
@@ -150,12 +154,16 @@ const article = ref<Article | null>(null)
 const related = ref<Article[]>([])
 const comments = ref<Comment[]>([])
 const comment = ref('')
-const notice = ref('')
 const html = ref('')
 const toc = ref<TocItem[]>([])
 const activeHeading = ref('')
+const reactionPulse = reactive({
+  like: false,
+  favorite: false,
+})
 
 let headingObserver: IntersectionObserver | null = null
+const router = useRouter()
 
 function renderMarkdown(source: string) {
   tocDraft = []
@@ -198,66 +206,8 @@ function escapeHtml(value: string) {
     .replace(/'/g, '&#39;')
 }
 
-function escapeCodeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
 function escapeAttr(value: string) {
   return escapeHtml(value)
-}
-
-function normalizeLanguage(value: string) {
-  const lang = value.trim().toLowerCase().split(/\s+/)[0]
-  const aliases: Record<string, string> = {
-    js: 'javascript',
-    jsx: 'javascript',
-    ts: 'typescript',
-    tsx: 'typescript',
-    golang: 'go',
-    sh: 'bash',
-    shell: 'bash',
-    yml: 'yaml',
-    md: 'markdown',
-    html: 'markup',
-    xml: 'markup',
-  }
-  return aliases[lang] || lang
-}
-
-const languageKeywords: Record<string, string[]> = {
-  javascript: ['async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'default', 'else', 'export', 'extends', 'finally', 'for', 'from', 'function', 'if', 'import', 'let', 'new', 'return', 'switch', 'throw', 'try', 'typeof', 'var', 'while'],
-  typescript: ['abstract', 'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'default', 'else', 'enum', 'export', 'extends', 'finally', 'for', 'from', 'function', 'if', 'implements', 'import', 'interface', 'let', 'namespace', 'new', 'private', 'protected', 'public', 'readonly', 'return', 'switch', 'throw', 'try', 'type', 'typeof', 'var', 'while'],
-  go: ['break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else', 'fallthrough', 'for', 'func', 'go', 'goto', 'if', 'import', 'interface', 'map', 'package', 'range', 'return', 'select', 'struct', 'switch', 'type', 'var'],
-  css: ['align-items', 'background', 'border', 'color', 'display', 'flex', 'font-size', 'gap', 'grid', 'height', 'justify-content', 'margin', 'padding', 'position', 'width'],
-  json: ['false', 'null', 'true'],
-  sql: ['alter', 'and', 'as', 'by', 'create', 'delete', 'drop', 'from', 'group', 'having', 'in', 'insert', 'join', 'left', 'limit', 'not', 'null', 'on', 'or', 'order', 'primary', 'right', 'select', 'set', 'table', 'update', 'values', 'where'],
-  bash: ['case', 'do', 'done', 'elif', 'else', 'esac', 'export', 'fi', 'for', 'function', 'if', 'in', 'then', 'while'],
-}
-
-function highlightCode(source: string, language: string) {
-  const escaped = escapeCodeHtml(source)
-  if (language === 'markup') return highlightMarkup(escaped)
-
-  const keywords = languageKeywords[language] || [...languageKeywords.javascript, ...languageKeywords.go]
-  const keywordPattern = keywords.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-  const pattern = new RegExp(`(\\/\\/.*|\\/\\*[\\s\\S]*?\\*\\/|--.*|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\`(?:\\\\.|[^\`\\\\])*\`|\\b(?:${keywordPattern})\\b|\\b\\d+(?:\\.\\d+)?\\b)`, 'g')
-
-  return escaped.replace(pattern, (match) => {
-    if (/^(\/\/|\/\*|--)/.test(match)) return `<span class="hljs-comment">${match}</span>`
-    if (/^["'`]/.test(match)) return `<span class="hljs-string">${match}</span>`
-    if (/^\d/.test(match)) return `<span class="hljs-number">${match}</span>`
-    return `<span class="hljs-keyword">${match}</span>`
-  })
-}
-
-function highlightMarkup(escaped: string) {
-  return escaped.replace(/(&lt;\/?)([A-Za-z][\w:-]*)(.*?)(\/?&gt;)/g, (_match, open, name, attrs, close) => {
-    const highlightedAttrs = String(attrs).replace(/([\w:-]+)(=)("[^"]*"|'[^']*')/g, '<span class="hljs-attr">$1</span>$2<span class="hljs-string">$3</span>')
-    return `<span class="hljs-tag">${open}<span class="hljs-name">${name}</span>${highlightedAttrs}${close}</span>`
-  })
 }
 
 function setupHeadingObserver() {
@@ -307,25 +257,55 @@ async function load() {
 
 async function sendComment() {
   if (!article.value || !comment.value.trim()) return
+  if (!hasLogin()) {
+    promptLogin()
+    return
+  }
   try {
     await api.addComment(article.value.id, comment.value)
     comment.value = ''
-    notice.value = '评论已发布'
     await load()
   } catch (e) {
-    notice.value = (e as Error).message
+    handleActionError(e)
   }
 }
 
 async function react(type: 'like' | 'favorite') {
   if (!article.value) return
+  if (!hasLogin()) {
+    promptLogin()
+    return
+  }
   try {
     await api.toggleReaction(article.value.id, type)
-    notice.value = type === 'like' ? '已切换点赞状态' : '已切换收藏状态'
+    pulseReaction(type)
     await load()
   } catch (e) {
-    notice.value = (e as Error).message
+    handleActionError(e)
   }
+}
+
+function hasLogin() {
+  return !!localStorage.getItem('blog_token')
+}
+
+function promptLogin() {
+  window.alert('请先进行登录')
+  void router.push({ path: '/auth', query: { redirect: route.fullPath } })
+}
+
+function handleActionError(error: unknown) {
+  const message = error instanceof Error ? error.message : ''
+  if (message.includes('401') || message.includes('missing token') || message.includes('invalid token')) {
+    promptLogin()
+  }
+}
+
+function pulseReaction(type: 'like' | 'favorite') {
+  reactionPulse[type] = true
+  window.setTimeout(() => {
+    reactionPulse[type] = false
+  }, 220)
 }
 
 onMounted(load)

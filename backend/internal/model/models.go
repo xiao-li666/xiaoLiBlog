@@ -84,3 +84,16 @@ type Notification struct {
 	Article   Article   `json:"article,omitempty"`
 	Comment   Comment   `json:"comment,omitempty"`
 }
+
+type ExternalLink struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	Name        string    `gorm:"size:80;not null" json:"name"`
+	Platform    string    `gorm:"size:80;not null" json:"platform"`
+	Description string    `gorm:"type:text" json:"description"`
+	LinkURL     string    `gorm:"size:500" json:"linkUrl"`
+	QRCodeURL   string    `gorm:"size:500" json:"qrCodeUrl"`
+	SortOrder   int       `gorm:"index;not null;default:0" json:"sortOrder"`
+	IsActive    bool      `gorm:"index;not null;default:true" json:"isActive"`
+}

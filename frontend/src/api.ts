@@ -1,4 +1,4 @@
-import type { AdminNotificationResponse, AdminStats, Article, Category, Comment, NotificationType, User } from './types'
+import type { AdminNotificationResponse, AdminStats, Article, Category, Comment, ExternalLink, NotificationType, TagStat, User } from './types'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080/api'
 
@@ -33,13 +33,19 @@ export const api = {
   health() {
     return request<{ ok: boolean }>('/health')
   },
-  register(payload: { name: string; email: string; password: string }) {
+  requestVerificationCode(payload: { email: string; purpose: 'login' | 'register' }) {
+    return request<{ ok: boolean; expiresIn: number }>('/auth/verification-code', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+  register(payload: { name: string; email: string; password: string; confirmPassword: string; verificationCode: string }) {
     return request<{ token: string; user: User }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
   },
-  login(payload: { email: string; password: string }) {
+  login(payload: { email: string; password: string; verificationCode: string }) {
     return request<{ token: string; user: User }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -62,11 +68,12 @@ export const api = {
       body,
     })
   },
-  articles(params: { q?: string; category?: string; page?: number } = {}) {
+  articles(params: { q?: string; category?: string; page?: number; pageSize?: number } = {}) {
     const query = new URLSearchParams()
     if (params.q) query.set('q', params.q)
     if (params.category) query.set('category', params.category)
     if (params.page) query.set('page', String(params.page))
+    if (params.pageSize) query.set('pageSize', String(params.pageSize))
     return request<{ items: Article[]; total: number; pages: number }>(`/articles?${query.toString()}`)
   },
   popularArticles() {
@@ -77,6 +84,12 @@ export const api = {
   },
   categories() {
     return request<{ items: Category[] }>('/categories')
+  },
+  tags() {
+    return request<{ items: TagStat[] }>('/tags')
+  },
+  externalLinks() {
+    return request<{ items: ExternalLink[] }>('/external-links')
   },
   comments(articleId: number) {
     return request<{ items: Comment[] }>(`/articles/id/${articleId}/comments`)
@@ -135,7 +148,6 @@ export const api = {
     id?: number
     title: string
     summary?: string
-    coverUrl?: string
     content: string
     tags?: string
     status?: 'draft' | 'published'
@@ -148,17 +160,46 @@ export const api = {
       body: JSON.stringify(payload),
     })
   },
+  generateArticleSummary(payload: { title?: string; content: string }) {
+    return request<{ summary: string }>('/admin/articles/summary', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
   deleteArticle(id: number) {
     return request<{ ok: boolean }>(`/admin/articles/${id}`, { method: 'DELETE' })
   },
   adminCategories() {
     return request<{ items: Category[] }>('/admin/categories')
   },
+  adminExternalLinks() {
+    return request<{ items: ExternalLink[] }>('/admin/external-links')
+  },
   adminComments() {
     return request<{ items: Comment[] }>('/admin/comments')
   },
   adminUsers() {
     return request<{ items: User[] }>('/admin/users')
+  },
+  saveExternalLink(payload: {
+    id?: number
+    name: string
+    platform: string
+    description?: string
+    linkUrl?: string
+    qrCodeUrl?: string
+    sortOrder?: number
+    isActive?: boolean
+  }) {
+    const method = payload.id ? 'PUT' : 'POST'
+    const path = payload.id ? `/admin/external-links/${payload.id}` : '/admin/external-links'
+    return request<{ item?: ExternalLink; ok?: boolean }>(path, {
+      method,
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteExternalLink(id: number) {
+    return request<{ ok: boolean }>(`/admin/external-links/${id}`, { method: 'DELETE' })
   },
   saveCategory(payload: { id?: number; name: string }) {
     const method = payload.id ? 'PUT' : 'POST'
