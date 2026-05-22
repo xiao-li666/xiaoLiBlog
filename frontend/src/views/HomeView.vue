@@ -1,24 +1,22 @@
-<template>
+﻿<template>
   <section class="home-page">
     <section class="hero hero-slim">
       <div class="hero-copy">
         <p class="eyebrow">xiaoli博客</p>
         <h1>记录、分享、沉淀</h1>
-        <p class="hero-text">简约阅读、分类浏览、热门推荐和模糊搜索都放在一个清爽的页面里。</p>
       </div>
       <div class="hero-search">
         <div class="search-bar">
           <input v-model="q" placeholder="搜索标题、摘要、正文、标签" @keyup.enter="loadArticles" />
-          <button @click="loadArticles">搜索</button>
+          <button @click="loadArticles"><SearchIcon :size="16" /> 搜索</button>
         </div>
-        <div class="search-hint">支持模糊匹配，快速定位文章。</div>
       </div>
     </section>
 
     <section class="blog-layout">
       <aside class="sidebar sidebar-left">
         <div class="sidebar-card">
-          <div class="sidebar-title">分类</div>
+          <div class="sidebar-title"><FolderOpenIcon :size="14" /> 分类</div>
           <button class="category-item" :class="{ active: category === '' }" @click="selectCategory('')">
             全部文章
           </button>
@@ -34,7 +32,7 @@
         </div>
 
         <div class="sidebar-card">
-          <div class="sidebar-title">专题入口</div>
+          <div class="sidebar-title"><TagIcon :size="14" /> 专题入口</div>
           <div class="tag-cloud">
             <span class="mini-chip">Vue</span>
             <span class="mini-chip">Go</span>
@@ -78,7 +76,7 @@
                 <span>·</span>
                 <span>{{ item.author?.name || '站长' }}</span>
                 <span>·</span>
-                <span class="meta">{{ item.likesCount + item.favoritesCount }} 热度</span>
+                <span class="meta">赞 {{ item.likesCount }} · 藏 {{ item.favoritesCount }}</span>
               </div>
               <h3><RouterLink :to="`/article/${item.slug}`">{{ item.title }}</RouterLink></h3>
               <p>{{ articleSummary(item) }}</p>
@@ -93,17 +91,20 @@
 
       <aside class="sidebar sidebar-right">
         <div class="sidebar-card">
-          <div class="sidebar-title">热门文章</div>
+          <div class="sidebar-title"><TrendingUpIcon :size="14" /> 热门文章</div>
           <div class="rank-list">
             <RouterLink v-for="item in popular" :key="item.id" class="rank-item" :to="`/article/${item.slug}`">
               <span class="rank-title">{{ item.title }}</span>
-              <span class="rank-meta">{{ item.likesCount + item.favoritesCount }}</span>
+              <span class="rank-meta">
+                <span class="rank-stat"><HeartIcon :size="12" /> {{ item.likesCount }}</span>
+                <span class="rank-stat"><BookmarkIcon :size="12" /> {{ item.favoritesCount }}</span>
+              </span>
             </RouterLink>
           </div>
         </div>
 
         <div class="sidebar-card">
-          <div class="sidebar-title">推荐阅读</div>
+          <div class="sidebar-title"><BookOpenIcon :size="14" /> 推荐阅读</div>
           <div class="recommend-item" v-for="item in popular.slice(0, 3)" :key="item.slug + '-rec'">
             <RouterLink :to="`/article/${item.slug}`">{{ item.title }}</RouterLink>
             <p>{{ articleSummary(item) }}</p>
@@ -116,6 +117,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { BookOpenIcon, BookmarkIcon, FolderOpenIcon, HeartIcon, SearchIcon, TagIcon, TrendingUpIcon } from 'lucide-vue-next'
 import { api } from '../api'
 import type { Article, Category } from '../types'
 
@@ -156,3 +158,4 @@ onMounted(async () => {
   await loadArticles()
 })
 </script>
+

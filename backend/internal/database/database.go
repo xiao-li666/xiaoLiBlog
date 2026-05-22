@@ -22,6 +22,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.Article{},
 		&model.Comment{},
 		&model.Reaction{},
+		&model.Notification{},
 	)
 }
 

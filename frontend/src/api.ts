@@ -1,6 +1,6 @@
-import type { AdminStats, Article, Category, Comment, User } from './types'
+import type { AdminNotificationResponse, AdminStats, Article, Category, Comment, NotificationType, User } from './types'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080/api'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080/api'
 
 type ApiResponse<T> = T
 
@@ -101,6 +101,26 @@ export const api = {
   },
   adminStats() {
     return request<AdminStats>('/admin/stats')
+  },
+  adminNotifications() {
+    return request<AdminNotificationResponse>('/admin/notifications')
+  },
+  deleteNotifications() {
+    return request<{ ok: boolean }>('/admin/notifications', {
+      method: 'DELETE',
+    }).catch(async (error) => {
+      const message = error instanceof Error ? error.message : ''
+      if (!message.includes('404')) throw error
+      return request<{ ok: boolean }>('/admin/notifications/clear', {
+        method: 'POST',
+      })
+    })
+  },
+  markNotificationsRead(types: NotificationType[] = [], articleIds: number[] = []) {
+    return request<{ ok: boolean }>('/admin/notifications/read', {
+      method: 'PATCH',
+      body: JSON.stringify({ types, articleIds }),
+    })
   },
   uploadAdminFile(file: File, kind: 'image' | 'markdown') {
     const body = new FormData()

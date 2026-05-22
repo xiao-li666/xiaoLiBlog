@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"blogapp/backend/internal/model"
@@ -25,10 +26,52 @@ import (
 )
 
 type Handler struct {
-	DB        *gorm.DB
-	RDB       *redis.Client
-	JWTKey    []byte
-	UploadDir string
+	DB            *gorm.DB
+	RDB           *redis.Client
+	JWTKey        []byte
+	UploadDir     string
+	notifications *notificationHub
+}
+
+type notificationHub struct {
+	mu   sync.Mutex
+	subs map[chan []byte]struct{}
+}
+
+func newNotificationHub() *notificationHub {
+	return &notificationHub{subs: make(map[chan []byte]struct{})}
+}
+
+func (h *notificationHub) subscribe() chan []byte {
+	ch := make(chan []byte, 8)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *notificationHub) unsubscribe(ch chan []byte) {
+	h.mu.Lock()
+	if _, ok := h.subs[ch]; ok {
+		delete(h.subs, ch)
+		close(ch)
+	}
+	h.mu.Unlock()
+}
+
+func (h *notificationHub) publish(payload []byte) {
+	h.mu.Lock()
+	subs := make([]chan []byte, 0, len(h.subs))
+	for ch := range h.subs {
+		subs = append(subs, ch)
+	}
+	h.mu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
 }
 
 type Claims struct {
@@ -60,7 +103,7 @@ type RegisterInput struct {
 }
 
 type UpdateMeInput struct {
-	Name     string `json:"name"`
+	Name      string `json:"name"`
 	AvatarURL string `json:"avatarUrl"`
 }
 
@@ -74,10 +117,11 @@ type CategoryInput struct {
 
 func New(db *gorm.DB, rdb *redis.Client, jwtKey []byte, uploadDir string) *Handler {
 	return &Handler{
-		DB:        db,
-		RDB:       rdb,
-		JWTKey:    jwtKey,
-		UploadDir: uploadDir,
+		DB:            db,
+		RDB:           rdb,
+		JWTKey:        jwtKey,
+		UploadDir:     uploadDir,
+		notifications: newNotificationHub(),
 	}
 }
 
@@ -251,6 +295,7 @@ func (h *Handler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "email already registered"})
 		return
 	}
+	h.createNotification("register", "新用户注册", fmt.Sprintf("%s 刚刚注册了账号", user.Name), &user.ID, nil, nil)
 	token, err := h.issueToken(user)
 	if err != nil {
 		internalError(c, err)
@@ -458,6 +503,14 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	h.createNotification(
+		"comment",
+		"新评论",
+		fmt.Sprintf("%s 评论了《%s》", user.Name, article.Title),
+		&user.ID,
+		&articleID,
+		&comment.ID,
+	)
 	_ = h.invalidateArticleCaches(c)
 	c.JSON(http.StatusCreated, gin.H{"comment": comment})
 }
@@ -492,6 +545,17 @@ func (h *Handler) ToggleReaction(c *gin.Context) {
 		}
 		toggledOn = true
 		h.adjustCounters(articleID, kind, 1)
+		notificationType := kind
+		if kind == "favorite" || kind == "like" {
+			h.createNotification(
+				notificationType,
+				map[string]string{"like": "新点赞", "favorite": "新收藏"}[kind],
+				fmt.Sprintf("%s 对《%s》进行了%s", user.Name, article.Title, map[string]string{"like": "点赞", "favorite": "收藏"}[kind]),
+				&user.ID,
+				&articleID,
+				nil,
+			)
+		}
 	} else if err == nil {
 		_ = h.DB.Delete(&existing).Error
 		h.adjustCounters(articleID, kind, -1)
@@ -636,6 +700,108 @@ func (h *Handler) AdminListComments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": commentViews(rows)})
 }
 
+func (h *Handler) AdminNotifications(c *gin.Context) {
+	var rows []model.Notification
+	if err := h.DB.Preload("User").Preload("Article").Preload("Comment").Order("id desc").Limit(50).Find(&rows).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+	counts := map[string]int64{}
+	var unreadTotal int64
+	_ = h.DB.Model(&model.Notification{}).Where("is_read = ?", false).Count(&unreadTotal).Error
+	types := []string{"register", "comment", "like", "favorite"}
+	for _, typ := range types {
+		var count int64
+		_ = h.DB.Model(&model.Notification{}).Where("is_read = ? AND type = ?", false, typ).Count(&count).Error
+		counts[typ] = count
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items":       notificationViews(rows),
+		"unreadTotal": unreadTotal,
+		"counts":      counts,
+	})
+}
+
+func (h *Handler) AdminNotificationStream(c *gin.Context) {
+	if h.notifications == nil {
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	ch := h.notifications.subscribe()
+	defer h.notifications.unsubscribe(ch)
+
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+
+	writeEvent := func(data string) {
+		_, _ = c.Writer.Write([]byte("data: " + data + "\n\n"))
+		flusher.Flush()
+	}
+
+	writeEvent("connected")
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-heartbeat.C:
+			writeEvent("ping")
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			writeEvent(string(data))
+		}
+	}
+}
+
+func (h *Handler) MarkNotificationsRead(c *gin.Context) {
+	var payload struct {
+		Types      []string `json:"types"`
+		ArticleIDs []uint   `json:"articleIds"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		badRequest(c, err)
+		return
+	}
+	tx := h.DB.Model(&model.Notification{}).Where("is_read = ?", false)
+	if len(payload.Types) > 0 {
+		tx = tx.Where("type IN ?", payload.Types)
+	}
+	if len(payload.ArticleIDs) > 0 {
+		tx = tx.Where("article_id IN ?", payload.ArticleIDs)
+	}
+	if err := tx.Update("is_read", true).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) DeleteNotifications(c *gin.Context) {
+	if err := h.DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Notification{}).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+	if h.notifications != nil {
+		h.notifications.publish([]byte("cleared"))
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func (h *Handler) ModerateComment(c *gin.Context) {
 	id := parseUint(c.Param("id"))
 	var payload struct {
@@ -728,11 +894,16 @@ func (h *Handler) DeleteCategory(c *gin.Context) {
 func (h *Handler) AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
-		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
+		tokenString := ""
+		if auth != "" && strings.HasPrefix(auth, "Bearer ") {
+			tokenString = strings.TrimPrefix(auth, "Bearer ")
+		} else {
+			tokenString = strings.TrimSpace(c.Query("token"))
+		}
+		if tokenString == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 			return
 		}
-		tokenString := strings.TrimPrefix(auth, "Bearer ")
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 			return h.JWTKey, nil
@@ -800,10 +971,15 @@ func (h *Handler) invalidateArticleCaches(c *gin.Context) error {
 
 func (h *Handler) allowDraft(c *gin.Context) bool {
 	auth := c.GetHeader("Authorization")
-	if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
+	tokenString := ""
+	if auth != "" && strings.HasPrefix(auth, "Bearer ") {
+		tokenString = strings.TrimPrefix(auth, "Bearer ")
+	} else {
+		tokenString = strings.TrimSpace(c.Query("token"))
+	}
+	if tokenString == "" {
 		return false
 	}
-	tokenString := strings.TrimPrefix(auth, "Bearer ")
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 		return h.JWTKey, nil
@@ -928,6 +1104,41 @@ func articleView(a model.Article) gin.H {
 	}
 }
 
+func notificationView(n model.Notification) gin.H {
+	var user any
+	if n.User.ID != 0 {
+		user = userView(n.User)
+	}
+	var article any
+	if n.Article.ID != 0 {
+		article = articleView(n.Article)
+	}
+	var comment any
+	if n.Comment.ID != 0 {
+		comment = gin.H{
+			"id":        n.Comment.ID,
+			"articleId": n.Comment.ArticleID,
+			"body":      n.Comment.Body,
+			"status":    n.Comment.Status,
+			"createdAt": n.Comment.CreatedAt,
+		}
+	}
+	return gin.H{
+		"id":        n.ID,
+		"type":      n.Type,
+		"title":     n.Title,
+		"content":   n.Content,
+		"isRead":    n.IsRead,
+		"userId":    n.UserID,
+		"articleId": n.ArticleID,
+		"commentId": n.CommentID,
+		"user":      user,
+		"article":   article,
+		"comment":   comment,
+		"createdAt": n.CreatedAt,
+	}
+}
+
 func articlesView(rows []model.Article) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
@@ -939,14 +1150,27 @@ func articlesView(rows []model.Article) []map[string]any {
 func commentViews(rows []model.Comment) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
+		var article any
+		if row.Article.ID != 0 {
+			article = articleView(row.Article)
+		}
 		out = append(out, gin.H{
 			"id":        row.ID,
 			"articleId": row.ArticleID,
+			"article":   article,
 			"user":      userView(row.User),
 			"body":      row.Body,
 			"status":    row.Status,
 			"createdAt": row.CreatedAt,
 		})
+	}
+	return out
+}
+
+func notificationViews(rows []model.Notification) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, notificationView(row))
 	}
 	return out
 }
@@ -971,6 +1195,23 @@ func extractArticleIDs(rows []model.Reaction) []uint {
 		out = append(out, row.ArticleID)
 	}
 	return out
+}
+
+func (h *Handler) createNotification(kind, title, content string, userID, articleID, commentID *uint) {
+	if h.DB == nil {
+		return
+	}
+	notification := model.Notification{
+		Type:      kind,
+		Title:     title,
+		Content:   content,
+		UserID:    userID,
+		ArticleID: articleID,
+		CommentID: commentID,
+	}
+	if err := h.DB.Create(&notification).Error; err == nil && h.notifications != nil {
+		h.notifications.publish([]byte(kind))
+	}
 }
 
 func badRequest(c *gin.Context, err error) {

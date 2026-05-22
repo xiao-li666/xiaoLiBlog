@@ -44,25 +44,27 @@
       <section class="sidebar-card">
         <div class="sidebar-title">互动</div>
         <div class="article-actions">
-          <button @click="react('like')">点赞 {{ article.likesCount }}</button>
-          <button class="ghost" @click="react('favorite')">收藏 {{ article.favoritesCount }}</button>
+          <button @click="react('like')"><ThumbsUpIcon :size="16" /> 点赞 {{ article.likesCount }}</button>
+          <button class="ghost" @click="react('favorite')"><BookmarkIcon :size="16" /> 收藏 {{ article.favoritesCount }}</button>
         </div>
       </section>
 
       <section class="article-panel article-comment-panel">
         <div class="panel-head">
-          <h3>评论</h3>
+          <h3><MessageSquareIcon :size="16" /> 评论</h3>
           <span class="muted">{{ comments.length }} 条</span>
         </div>
         <textarea v-model="comment" placeholder="写下你的评论"></textarea>
         <div class="actions-row">
-          <button @click="sendComment">发表评论</button>
+          <button @click="sendComment"><SendIcon :size="14" /> 发表评论</button>
         </div>
         <p class="feedback success" v-if="notice">{{ notice }}</p>
 
         <div class="comment-list">
           <div class="comment-card" v-for="item in comments" :key="item.id">
-            <div class="comment-avatar">{{ item.user.name.slice(0, 1) }}</div>
+            <div class="comment-avatar">
+              <img :src="item.user.avatarUrl || defaultAvatar" :alt="item.user.name" />
+            </div>
             <div>
               <strong>{{ item.user.name }}</strong>
               <p>{{ item.body }}</p>
@@ -72,7 +74,7 @@
       </section>
 
       <section class="sidebar-card" v-if="related.length">
-        <div class="sidebar-title">相关文章</div>
+        <div class="sidebar-title"><LinkIcon :size="14" /> 相关文章</div>
         <div class="rank-list">
           <RouterLink v-for="item in related" :key="item.id" class="rank-item" :to="`/article/${item.slug}`">
             <span class="rank-title">{{ item.title }}</span>
@@ -87,8 +89,19 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Marked, type Token, type Tokens } from 'marked'
+import { BookmarkIcon, LinkIcon, MessageSquareIcon, SendIcon, ThumbsUpIcon } from 'lucide-vue-next'
 import { api } from '../api'
 import type { Article, Comment } from '../types'
+
+const defaultAvatar =
+  'data:image/svg+xml;charset=UTF-8,' +
+  encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+      <rect width="96" height="96" rx="24" fill="#30363d"/>
+      <circle cx="48" cy="38" r="17" fill="#8b949e"/>
+      <path d="M20 80c4-17 19-26 28-26s24 9 28 26" fill="#8b949e"/>
+    </svg>
+  `)
 
 type TocItem = {
   id: string

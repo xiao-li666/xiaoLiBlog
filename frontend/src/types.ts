@@ -33,10 +33,36 @@ export type Article = {
 export type Comment = {
   id: number
   articleId: number
+  article?: Article | null
   body: string
   status: 'published' | 'hidden'
   createdAt: string
   user: User
+}
+
+export type NotificationType = 'register' | 'comment' | 'like' | 'favorite'
+
+export type Notification = {
+  id: number
+  type: NotificationType
+  title: string
+  content: string
+  isRead: boolean
+  userId?: number
+  articleId?: number
+  commentId?: number
+  createdAt: string
+  user?: User | null
+  article?: Article | null
+  comment?: Partial<Comment> | null
+}
+
+export type NotificationCounts = Record<NotificationType, number>
+
+export type AdminNotificationResponse = {
+  items: Notification[]
+  unreadTotal: number
+  counts: NotificationCounts
 }
 
 export type AdminStats = {

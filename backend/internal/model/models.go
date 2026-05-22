@@ -68,3 +68,19 @@ type Reaction struct {
 	ArticleID uint      `gorm:"uniqueIndex:ux_user_article_type,priority:2;not null;index" json:"articleId"`
 	Type      string    `gorm:"uniqueIndex:ux_user_article_type,priority:3;size:16;not null" json:"type"`
 }
+
+type Notification struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Type      string    `gorm:"size:24;index;not null" json:"type"`
+	Title     string    `gorm:"size:180;not null" json:"title"`
+	Content   string    `gorm:"size:500" json:"content"`
+	IsRead    bool      `gorm:"index;not null;default:false" json:"isRead"`
+	UserID    *uint     `gorm:"index" json:"userId"`
+	ArticleID *uint     `gorm:"index" json:"articleId"`
+	CommentID *uint     `gorm:"index" json:"commentId"`
+	User      User      `json:"user,omitempty"`
+	Article   Article   `json:"article,omitempty"`
+	Comment   Comment   `json:"comment,omitempty"`
+}

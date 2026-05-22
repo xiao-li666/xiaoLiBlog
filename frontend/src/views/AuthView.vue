@@ -19,18 +19,27 @@
 
       <form class="auth-form" @submit.prevent="submit">
         <label v-if="mode === 'register'">
-          <span>昵称</span>
-          <input v-model.trim="name" autocomplete="name" placeholder="请输入昵称" />
+          <span class="label-text">昵称</span>
+          <div class="input-icon">
+            <UserIcon :size="18" />
+            <input v-model.trim="name" autocomplete="name" placeholder="请输入昵称" />
+          </div>
         </label>
 
         <label>
-          <span>邮箱</span>
-          <input v-model.trim="email" type="email" autocomplete="email" placeholder="name@example.com" />
+          <span class="label-text">邮箱</span>
+          <div class="input-icon">
+            <MailIcon :size="18" />
+            <input v-model.trim="email" type="email" autocomplete="email" placeholder="name@example.com" />
+          </div>
         </label>
 
         <label>
-          <span>密码</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+          <span class="label-text">密码</span>
+          <div class="input-icon">
+            <LockIcon :size="18" />
+            <input v-model="password" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+          </div>
         </label>
 
         <button class="auth-submit" :disabled="submitting">
@@ -47,6 +56,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { LockIcon, MailIcon, UserIcon } from 'lucide-vue-next'
 import { api } from '../api'
 
 type AuthMode = 'login' | 'register'
