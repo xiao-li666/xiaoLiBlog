@@ -128,6 +128,8 @@
                 <div class="post-meta">
                   <span class="post-meta-tag"><FolderOpenIcon :size="13" /> {{ item.category?.name || '未分类' }}</span>
                   <span class="post-meta-sep">·</span>
+                  <span class="post-meta-tag"><UserRoundIcon :size="13" /> {{ item.author?.name || '站长' }}</span>
+                  <span class="post-meta-sep">·</span>
                   <span class="post-meta-tag"><CalendarDaysIcon :size="13" /> {{ formatDate(item.publishedAt) }}</span>
                 </div>
                 <h3><RouterLink :to="`/article/${item.slug}`">{{ item.title }}</RouterLink></h3>
