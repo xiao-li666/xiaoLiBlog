@@ -91,6 +91,11 @@
       <router-view />
     </main>
 
+    <footer class="site-footer">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">陇ICP备2026004254号</a>
+      <span>陇ICP备2026004254号-1</span>
+    </footer>
+
     <div v-if="profileOpen" class="profile-modal-backdrop" @click.self="closeProfileEditor">
       <section class="profile-modal" role="dialog" aria-modal="true" aria-label="编辑个人资料">
         <div class="profile-modal-head">
