@@ -147,6 +147,11 @@
               </div>
             </article>
           </div>
+
+          <footer class="home-icp-footer">
+            <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">陇ICP备2026004254号</a>
+            <span>陇ICP备2026004254号-1</span>
+          </footer>
         </div>
       </main>
 
